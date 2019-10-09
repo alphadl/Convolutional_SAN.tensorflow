@@ -39,6 +39,15 @@ def tokens_to_words(tokens, subword_token="￭", is_spacer=None):
   """
   if is_spacer is None:
     is_spacer = subword_token == "▁"
+
+  # Subtokenizer was used: The spacer appears at the end of the word, rather
+  # the beginning of it.
+  if subword_token == "·":
+      end = tf.strings.regex_full_match(tokens, ".*[%s$]" % subword_token)
+      end_indices = tf.squeeze(tf.where(end), -1)
+      end_indices = tf.concat([[0], end_indices + 1, [tokens.shape[0]]], axis=0)
+      return tf.RaggedTensor.from_row_splits(tokens, end_indices)
+
   if is_spacer:
     subword = tf.strings.regex_full_match(tokens, "[^%s].*" % subword_token)
   else:
