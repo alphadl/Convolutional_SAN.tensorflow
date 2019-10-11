@@ -14,7 +14,7 @@ from opennmt.utils import misc
 class WordNoiser(object):
   """Applies noise to words sequences."""
 
-  def __init__(self, noises=None, subword_token="￭", is_spacer=False):
+  def __init__(self, noises=None, subword_token="￭", is_spacer=None):
     """Initializes the noising class.
 
     Args:
@@ -226,7 +226,7 @@ class WordPermutation(Noise):
     return tf.gather(words, new_pos)
 
 
-def tokens_to_words(tokens, subword_token="￭", is_spacer=False):
+def tokens_to_words(tokens, subword_token="￭", is_spacer=None):
   """Converts a sequence of tokens to a sequence of words.
 
   For example, if a BPE tokenization produces this sequence:
@@ -241,21 +241,29 @@ def tokens_to_words(tokens, subword_token="￭", is_spacer=False):
     tokens: A 1D string ``tf.Tensor``.
     subword_token: The special token used by the subword tokenizer.
     is_spacer: Whether :obj:`subword_token` is used as a spacer (as in
-      SentencePiece) or a joiner (as in BPE).
+      SentencePiece) or a joiner (as in BPE). If ``None``, will infer
+      directly from :obj:`subword_token`.
 
   Returns:
-    A 2D string ``tf.Tensor``.
+    The words as a 2D string ``tf.RaggedTensor``.
   """
+  if is_spacer is None:
+    is_spacer = subword_token == "▁"
   if is_spacer:
-    subword = tf.strings.regex_full_match(tokens, "[^%s].*" % subword_token)
+    # First token implicitly starts with a spacer.
+    left_and_single = tf.logical_or(
+        tf.strings.regex_full_match(tokens, "%s.*" % subword_token),
+        tf.one_hot(0, tf.shape(tokens)[0], on_value=True, off_value=False))
+    right = tf.strings.regex_full_match(tokens, ".+%s" % subword_token)
+    word_start = tf.logical_or(tf.roll(right, shift=1, axis=0), left_and_single)
   else:
     right = tf.strings.regex_full_match(tokens, ".*%s" % subword_token)
     left = tf.strings.regex_full_match(tokens, "%s.*" % subword_token)
     subword = tf.logical_or(tf.roll(right, shift=1, axis=0), left)
-  start = tf.logical_not(subword)
-  start_indices = tf.squeeze(tf.where(start), -1)
-  words = tf.RaggedTensor.from_row_starts(tokens, start_indices)
-  return words.to_tensor()
+    word_start = tf.logical_not(subword)
+  start_indices = tf.squeeze(tf.where(word_start), -1)
+  return tf.RaggedTensor.from_row_starts(tokens, start_indices)
+
 
 def random_mask(shape, probability):
   """Generates a random boolean mask.

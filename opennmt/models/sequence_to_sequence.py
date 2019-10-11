@@ -162,12 +162,13 @@ class SequenceToSequence(Model):
     super(SequenceToSequence, self).initialize(metadata, params=params)
     if params and params.get("contrastive_learning"):
       subword_token = params.get("decoding_subword_token", "￭")
+      is_spacer=params.get("decoding_subword_token_is_spacer")
       # Use the simplest and most effective CL_one from the paper.
       # https://www.aclweb.org/anthology/P19-1623
       noiser = noise.WordNoiser(
           noises=[noise.WordOmission(1)],
           subword_token=subword_token,
-          is_spacer=subword_token == "▁")
+          is_spacer=is_spacer)
       self.labels_inputter.set_noise(noiser, in_place=False)
 
   def _build(self):
@@ -299,7 +300,8 @@ class SequenceToSequence(Model):
             target_tokens,
             sampled_length,
             decoding_noise,
-            params.get("decoding_subword_token", "￭"))
+            params.get("decoding_subword_token", "￭"),
+            params.get("decoding_subword_token_is_spacer"))
         sampled_length += 1
         alignment = None  # Invalidate alignments.
 
@@ -555,7 +557,7 @@ def replace_unknown_target(target_tokens,
       x=aligned_source_tokens,
       y=target_tokens)
 
-def _add_noise(tokens, lengths, params, subword_token):
+def _add_noise(tokens, lengths, params, subword_token, is_spacer):
   if not isinstance(params, list):
     raise ValueError("Expected a list of noise modules")
   noises = []
@@ -573,8 +575,11 @@ def _add_noise(tokens, lengths, params, subword_token):
     else:
       raise ValueError("Invalid noise type: %s" % noise_type)
     noises.append(noise_class(*args))
+
+  if is_spacer is None:
+      is_spacer = subword_token == "▁"
   noiser = noise.WordNoiser(
       noises=noises,
       subword_token=subword_token,
-      is_spacer=subword_token == "▁")
+      is_spacer=is_spacer)
   return noiser(tokens, lengths, keep_shape=True)
