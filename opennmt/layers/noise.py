@@ -262,7 +262,7 @@ def tokens_to_words(tokens, subword_token="￭", is_spacer=None):
     subword = tf.logical_or(tf.roll(right, shift=1, axis=0), left)
     word_start = tf.logical_not(subword)
   start_indices = tf.squeeze(tf.where(word_start), -1)
-  return tf.RaggedTensor.from_row_starts(tokens, start_indices)
+  return tf.RaggedTensor.from_row_starts(tokens, start_indices).to_tensor()
 
 
 def random_mask(shape, probability):
