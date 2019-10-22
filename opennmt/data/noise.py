@@ -4,6 +4,8 @@
 
 import abc
 import six
+from collections import Counter
+from itertools import chain
 
 import tensorflow as tf
 
@@ -194,6 +196,38 @@ class WordOmission(Noise):
     keep_count = tf.maximum(num_words - self.count, 1)
     keep_indices = tf.sort(shuffle_indices[:keep_count])
     return tf.gather(words, keep_indices)
+
+
+class RareWordOmission(Noise):
+  """Randomly removes words, log proportionally to the inverse of their frequency in the training corpus.
+
+  This is different than `opennmt.data.WordOmission` as:
+    * It only drops a single word (harcoded parameter) to avoid replacement performance hits
+    * Attempts to drop a relatively rare word rather than a uniformly random one.
+  """
+
+  def __init__(self, counts_file):
+      self.counts = tf.lookup.StaticHashTable(tf.lookup.TextFileInitializer(
+        "counts_file", tf.string, 0, tf.int64, 1, delimiter="\t"), 0)
+    # Below reads counts from UNTOKENIZED corpus (not by default available...)
+    # with open(target_corpus) as f:
+    #     counter = Counter(chain.from_iterable(map(str.split, f)))
+    #     keys = tf.constant(list(counter.keys()))
+    #     values = tf.constant(list(counter.values()))
+    #     self.counts = tf.lookup.StaticHashTable(
+    #         tf.lookup.KeyValueTensorInitializer(keys, values), -1
+    #     )
+
+  def _apply(self, words):
+    num_words = tf.shape(words)[0]
+    counts = self.counts.lookup(words)
+
+    drop_probas = tf.nn.softmax(tf.math.reciprocal(tf.cast(counts, dtype=tf.float32)))
+    remove_index = tf.random.categorical(tf.math.log([drop_probas]), 1)
+    # This will instead remove the HARD most rare word in the sentence.
+    # remove_index = tf.math.argmin(counts)
+
+    return tf.concat([words[:remove_index], words[remove_index + 1:]], axis=0)
 
 
 class WordReplacement(Noise):

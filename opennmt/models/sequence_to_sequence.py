@@ -126,6 +126,13 @@ class SequenceToSequence(model.SequenceGenerator):
           is_spacer=self.params.get("decoding_subword_token_is_spacer"))
       self.labels_inputter.set_noise(noiser, in_place=False)
 
+    elif self.params.get("rare_contrastive_learning"):
+      noiser = noise.WordNoise(
+        noises=[RareWordOmission(self.params.get("label_words_count"))],
+        subword_token=self.params.get("decoding_subword_token", "￭"),
+        is_spacer=self.params.get("decoding_subword_token_is_spacer"))
+      self.labels_inputter.set_noise(noiser, in_place=False)
+
   def build(self, input_shape):
     super(SequenceToSequence, self).build(input_shape)
     output_layer = None
@@ -201,7 +208,7 @@ class SequenceToSequence(model.SequenceGenerator):
     outputs = dict(logits=logits, attention=attention)
 
     noisy_ids = labels.get("noisy_ids")
-    if noisy_ids is not None and params.get("contrastive_learning"):
+    if noisy_ids is not None and (params.get("contrastive_learning") or params.get("rare_contrastive_learning"):
       # In case of contrastive learning, also forward the erroneous
       # translation to compute its log likelihood later.
       noisy_inputs = self.labels_inputter({"ids": noisy_ids}, training=training)
@@ -305,7 +312,7 @@ class SequenceToSequence(model.SequenceGenerator):
     logits = outputs["logits"]
     noisy_logits = outputs.get("noisy_logits")
     attention = outputs.get("attention")
-    if noisy_logits is not None and params.get("contrastive_learning"):
+    if noisy_logits is not None and (params.get("contrastive_learning") or params.get("rare_contrastive_learning")):
       return losses.max_margin_loss(
           logits,
           labels["ids_out"],
