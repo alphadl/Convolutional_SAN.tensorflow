@@ -202,7 +202,7 @@ class RareWordOmission(Noise):
   """Randomly removes words, log proportionally to the inverse of their frequency in the training corpus.
 
   This is different than `opennmt.data.WordOmission` as:
-    * It only drops a single word (harcoded parameter) to avoid replacement performance hits
+    * It only drops a single word (hardcoded parameter) to avoid replacement performance hits
     * Attempts to drop a relatively rare word rather than a uniformly random one.
   """
 
@@ -220,8 +220,14 @@ class RareWordOmission(Noise):
 
   def _apply(self, words):
     num_words = tf.shape(words)[0]
-    counts = self.counts.lookup(words)
 
+    # Get a list of actual words that can be mapped against the counts table.
+    words = tf.strings.reduce_join(words, axis=1)
+    lengths = tf.strings.length(reduced, unit="UTF8_CHAR")
+    pos = tf.ones(num_words, dtype=tf.int32)
+    words = tf.strings.substr(words, pos=pos, len=lengths, unit="UTF8_CHAR")
+
+    counts = self.counts.lookup(words)
     drop_probas = tf.nn.softmax(tf.math.reciprocal(tf.cast(counts, dtype=tf.float32)))
     remove_index = tf.random.categorical(tf.math.log([drop_probas]), 1)
     # This will instead remove the HARD most rare word in the sentence.
