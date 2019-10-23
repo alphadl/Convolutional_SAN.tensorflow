@@ -208,7 +208,7 @@ class RareWordOmission(Noise):
 
   def __init__(self, counts_file):
     self.counts = tf.lookup.StaticHashTable(tf.lookup.TextFileInitializer(
-      "counts_file", tf.string, 0, tf.int64, 1, delimiter="\t"), 0)
+      counts_file, tf.string, 0, tf.int64, 1, delimiter="\t"), 0)
     # Below reads counts from UNTOKENIZED corpus (not by default available...)
     # with open(target_corpus) as f:
     #     counter = Counter(chain.from_iterable(map(str.split, f)))
