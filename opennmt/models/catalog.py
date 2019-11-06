@@ -10,6 +10,7 @@ from opennmt import layers
 from opennmt.models import language_model
 from opennmt.models import sequence_tagger
 from opennmt.models import sequence_to_sequence
+from opennmt.models import sequence_classifier
 from opennmt.models import transformer
 from opennmt.utils.misc import merge_dict
 
@@ -134,7 +135,7 @@ class LstmCnnCrfTagger(sequence_tagger.SequenceTagger):
     })
 
 
-class BookingClassifier(models.SequenceClassifier):
+class BookingClassifier(sequence_classifier.SequenceClassifier):
   def __init__(self):
     super(BookingClassifier, self).__init__(
       inputter=inputters.WordEmbedder(embedding_size=256),
@@ -146,6 +147,20 @@ class BookingClassifier(models.SequenceClassifier):
         dropout=0.1,
         attention_dropout=0.1,
         ffn_dropout=0.1))
+
+  def auto_config(self, num_replicas=1):
+    config = super(BookingClassifier, self).auto_config(num_replicas=num_replicas)
+    return merge_dict(config, {
+        "params": {
+            "optimizer": "Adam",
+            "learning_rate": 0.001
+        },
+        "train": {
+            "effective_batch_size": 25000,
+            "batch_size": 3072,
+            "batch_type": "tokens",
+        }
+    })
 
 
 class Transformer(transformer.Transformer):
