@@ -3,7 +3,6 @@
 import tensorflow as tf
 
 from opennmt import inputters
-from opennmt import layers
 from opennmt.data import dataset as dataset_util
 from opennmt.models import model
 from opennmt.utils import decoding
@@ -43,16 +42,14 @@ class LanguageModel(model.SequenceGenerator):
         }
     })
 
+  def initialize(self, data_config, params=None):
+    super(LanguageModel, self).initialize(data_config, params=params)
+    self.decoder.initialize(vocab_size=self.examples_inputter.vocabulary_size)
+
   def build(self, input_shape):
     super(LanguageModel, self).build(input_shape)
-    vocab_size = self.examples_inputter.vocabulary_size
-    output_layer = None
     if self.reuse_embedding:
-      output_layer = layers.Dense(
-          vocab_size,
-          weight=self.examples_inputter.embedding,
-          transpose=True)
-    self.decoder.initialize(vocab_size=vocab_size, output_layer=output_layer)
+      self.decoder.reuse_embeddings(self.examples_inputter.embedding)
 
   def call(self, features, labels=None, training=None, step=None):
     outputs, predictions = None, None
@@ -178,7 +175,7 @@ class LanguageModelInputter(inputters.WordEmbedder):
     dataset = self.make_dataset(features_file, training=False)
     dataset = dataset.apply(dataset_util.inference_pipeline(
         batch_size,
-        process_fn=lambda x: self.make_features(x, training=False)[0],
+        process_fn=lambda x: self.make_features(element=x, training=False)[0],
         length_bucket_width=length_bucket_width,
         length_fn=self.get_length,
         num_threads=num_threads,
@@ -196,7 +193,7 @@ class LanguageModelInputter(inputters.WordEmbedder):
     dataset = self.make_dataset(features_file, training=False)
     dataset = dataset.apply(dataset_util.inference_pipeline(
         batch_size,
-        process_fn=lambda x: self.make_features(x, training=False),
+        process_fn=lambda x: self.make_features(element=x, training=False),
         num_threads=num_threads,
         prefetch_buffer_size=prefetch_buffer_size))
     return dataset
@@ -226,7 +223,7 @@ class LanguageModelInputter(inputters.WordEmbedder):
         batch_multiplier=batch_multiplier,
         length_bucket_width=length_bucket_width,
         single_pass=single_pass,
-        process_fn=lambda x: self.make_features(x, training=True),
+        process_fn=lambda x: self.make_features(element=x, training=True),
         num_threads=num_threads,
         shuffle_buffer_size=shuffle_buffer_size,
         prefetch_buffer_size=prefetch_buffer_size,
