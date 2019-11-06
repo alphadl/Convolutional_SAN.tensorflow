@@ -133,6 +133,21 @@ class LstmCnnCrfTagger(sequence_tagger.SequenceTagger):
         }
     })
 
+
+class BookingClassifier(models.SequenceClassifier):
+  def __init__(self):
+    super(BookingClassifier, self).__init__(
+      inputter=inputters.WordEmbedder(embedding_size=256),
+      encoder=encoders.SelfAttentionEncoder(
+        num_layers=6,
+        num_units=512,
+        num_heads=8,
+        ffn_inner_dim=2048,
+        dropout=0.1,
+        attention_dropout=0.1,
+        ffn_dropout=0.1))
+
+
 class Transformer(transformer.Transformer):
   """Defines a Transformer model as decribed in https://arxiv.org/abs/1706.03762."""
   def __init__(self):
@@ -149,6 +164,7 @@ class Transformer(transformer.Transformer):
         attention_dropout=0.1,
         ffn_dropout=0.1)
 
+
 class TransformerBig(transformer.Transformer):
   """Defines a large Transformer model as decribed in https://arxiv.org/abs/1706.03762."""
   def __init__(self):
@@ -164,6 +180,7 @@ class TransformerBig(transformer.Transformer):
         dropout=0.3,
         attention_dropout=0.1,
         ffn_dropout=0.1)
+
 
 class GPT2Small(language_model.LanguageModel):
   """GPT-2 language model (small version) as described in:
