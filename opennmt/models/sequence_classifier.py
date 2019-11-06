@@ -66,10 +66,11 @@ class SequenceClassifier(Model):
         training=training)
 
   def get_metrics(self):
-    return {"accuracy": tf.keras.metrics.Accuracy()}
+    return {"accuracy": tf.keras.metrics.Accuracy(), "AUC": tf.keras.metrics.AUC()}
 
   def update_metrics(self, metrics, predictions, labels):
     metrics["accuracy"].update_state(labels["classes_id"], predictions["classes_id"])
+    metrics["AUC"].update_state(labels["classes_id"], predictions["classes_id"])
 
   def print_prediction(self, prediction, params=None, stream=None):
     print_bytes(prediction["classes"], stream=stream)
