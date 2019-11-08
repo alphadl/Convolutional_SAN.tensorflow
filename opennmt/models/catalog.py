@@ -182,6 +182,13 @@ class BookingClassifier(sequence_classifier.SequenceClassifier):
   def print_prediction(self, prediction, params=None, stream=None):
     print(prediction["probs"], file=stream)
 
+  def get_metrics(self):
+    return {"accuracy": tf.keras.metrics.Accuracy(), "AUC": tf.keras.metrics.AUC(curve="PR")}
+
+  def update_metrics(self, metrics, predictions, labels):
+    metrics["accuracy"].update_state(labels["classes_id"], predictions["classes_id"])
+    metrics["AUC"].update_state(labels["classes_id"], predictions["classes_id"])
+
 
 class Transformer(transformer.Transformer):
   """Defines a Transformer model as decribed in https://arxiv.org/abs/1706.03762."""
