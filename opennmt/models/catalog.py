@@ -137,11 +137,12 @@ class LstmCnnCrfTagger(sequence_tagger.SequenceTagger):
 
 class BookingClassifier(sequence_classifier.SequenceClassifier):
   def __init__(self):
+    self._num_units = 512
     super(BookingClassifier, self).__init__(
       inputter=inputters.WordEmbedder(embedding_size=256),
       encoder=encoders.SelfAttentionEncoder(
         num_layers=6,
-        num_units=512,
+        num_units=self._num_units,
         num_heads=8,
         ffn_inner_dim=2048,
         dropout=0.1,
@@ -152,15 +153,34 @@ class BookingClassifier(sequence_classifier.SequenceClassifier):
     config = super(BookingClassifier, self).auto_config(num_replicas=num_replicas)
     return merge_dict(config, {
         "params": {
-            "optimizer": "Adam",
-            "learning_rate": 0.001
+            "average_loss_in_time": True,
+            "label_smoothing": 0.1,
+            "optimizer": "LazyAdam",
+            "optimizer_params": {
+                "beta_1": 0.9,
+                "beta_2": 0.998
+            },
+            "learning_rate": 2.0,
+            "decay_type": "NoamDecay",
+            "decay_params": {
+                "model_dim": self._num_units,
+                "warmup_steps": 8000
+            }
         },
         "train": {
             "effective_batch_size": 25000,
             "batch_size": 3072,
-            "batch_type": "tokens",
+            "batch_type": "tokens"
         }
     })
+
+  def call(self, *args, **kwargs):
+    logits, _ = super(BookingClassifier, self).call(*args, **kwargs)
+    predictions = dict(probs=tf.nn.softmax(logits))
+    return logits, predictions
+
+  def print_prediction(self, prediction, params=None, stream=None):
+    print(prediction["probs"], file=stream)
 
 
 class Transformer(transformer.Transformer):
