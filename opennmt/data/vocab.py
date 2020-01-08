@@ -1,7 +1,5 @@
 """Vocabulary utilities for Python scripts."""
 
-import six
-
 import tensorflow as tf
 import numpy as np
 
@@ -121,8 +119,7 @@ class Vocab(object):
     Args:
       token: The string to add.
     """
-    if isinstance(token, six.binary_type):
-      token = tf.compat.as_text(token)
+    token = tf.compat.as_text(token)
     if token not in self._token_to_id:
       index = self.size
       self._token_to_id[token] = index
@@ -143,11 +140,9 @@ class Vocab(object):
     """
     value = None
 
-    if isinstance(identifier, six.string_types):
-      if isinstance(identifier, six.binary_type):
-        identifier = tf.compat.as_text(identifier)
-      if identifier in self._token_to_id:
-        value = self._token_to_id[identifier]
+    if isinstance(identifier, (bytes, str)):
+      identifier = tf.compat.as_text(identifier)
+      value = self._token_to_id.get(identifier)
     elif identifier < self.size:
       value = self._id_to_token[identifier]
 
@@ -222,7 +217,7 @@ def get_mapping(current_vocab_path, new_vocab_path, mode="replace"):
   mapping = []
   if mode == "merge":
     final_vocab = Vocab.from_file(current_vocab_path)
-    mapping = [i for i in range(current_vocab.size)]
+    mapping = list(range(current_vocab.size))
     for new_word in new_vocab.words:
       if current_vocab.lookup(new_word) is None:
         mapping.append(-1)
@@ -238,35 +233,12 @@ def get_mapping(current_vocab_path, new_vocab_path, mode="replace"):
   mapping.append(current_vocab.size)  # <unk> token is always the last entry.
   return mapping, final_vocab
 
-def _mirror_distribution(from_variable, shape, dtype=tf.float32):
-  rank = from_variable.shape.rank
-  if rank == 2:
-    mean_per_emb, variance_per_emb = tf.nn.moments(from_variable, 1)
-    global_mean = tf.math.reduce_mean(mean_per_emb)
-    global_variance = tf.math.reduce_mean(variance_per_emb)
-  elif rank == 1:
-    global_mean, global_variance = tf.nn.moments(from_variable, 0)
-  else:
-    raise ValueError("Unsupported variable rank %d" % rank)
-  return tf.random.normal(
-      shape,
-      mean=global_mean,
-      stddev=tf.math.sqrt(global_variance),
-      dtype=dtype)
-
 def update_variable(ref_variable, new_variable, mapping, vocab_axis=0):
   """Update a vocabulary variable, possibly copying previous entries based on
   mapping.
   """
-  # Ensure that new_variable has a value distribution similar to ref_variable.
-  # This is required for new words to produce an output distribution that is
-  # "compatible" with the next trained layer.
-  new_variable.assign(_mirror_distribution(
-      ref_variable,
-      tf.shape(new_variable),
-      dtype=new_variable.dtype))
   ref = ref_variable.numpy()
-  new = new_variable.numpy()
+  new = np.zeros(new_variable.shape.as_list(), dtype=new_variable.dtype.as_numpy_dtype)
   perm = None
   if vocab_axis != 0:
     # Make the dimension to index the first.

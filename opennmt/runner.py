@@ -1,7 +1,6 @@
 """Main library entrypoint."""
 
 import copy
-import io
 import os
 import sys
 import random
@@ -9,7 +8,6 @@ import math
 import subprocess
 import time
 import tempfile
-import six
 import yaml
 
 import numpy as np
@@ -18,7 +16,6 @@ import tensorflow as tf
 from opennmt import evaluation
 from opennmt import models
 from opennmt import training as training_util
-from opennmt.data import dataset as dataset_util
 from opennmt.utils import checkpoint as checkpoint_util
 from opennmt.utils import misc
 
@@ -65,7 +62,7 @@ class Runner(object):
     """
     self._model = model
     self._optimizer = None
-    self._config = config
+    self._config = copy.deepcopy(config)
     self._auto_config = auto_config
     self._mixed_precision = mixed_precision
     if mixed_precision:
@@ -74,6 +71,16 @@ class Runner(object):
       np.random.seed(seed)
       random.seed(seed)
       tf.random.set_seed(seed)
+
+  @property
+  def model(self):
+    """The :class:`opennmt.models.Model` executed by this runner."""
+    return self._model
+
+  @property
+  def model_dir(self):
+    """The active model directory."""
+    return self._config["model_dir"]
 
   def _finalize_config(self, training=False, num_devices=1):
     # Configuration priority: user config > auto config > default config.
@@ -84,7 +91,9 @@ class Runner(object):
         raise NotImplementedError("This model does not define any automatic configuration values")
       misc.merge_dict(config, model_config)
     misc.merge_dict(config, self._config)
+
     config["params"].setdefault("num_hypotheses", config["infer"].get("n_best", 1))
+    config["params"].setdefault("average_loss_in_time", config["train"]["batch_type"] == "tokens")
 
     if training:
       train_config = config["train"]
@@ -168,15 +177,6 @@ class Runner(object):
     else:
       evaluator = None
 
-    if num_devices == 1:
-      devices = None
-    else:
-      devices = tf.config.experimental.list_logical_devices(device_type="GPU")
-      if len(devices) < num_devices:
-        raise ValueError("Requested %d devices but only %d are visible" % (
-            num_devices, len(devices)))
-      devices = [device.name for device in devices[0:num_devices]]
-
     # Set gradients accumulation based on the requested effective batch size.
     if train_config.get("effective_batch_size") is not None:
       accum_steps = _count_batch_accum(
@@ -192,7 +192,7 @@ class Runner(object):
 
     trainer = training_util.Trainer(
         checkpoint,
-        devices=devices,
+        devices=misc.get_devices(count=num_devices),
         mixed_precision=self._mixed_precision)
     trainer(
         dataset,
@@ -249,11 +249,13 @@ class Runner(object):
     optimizer = checkpoint.optimizer
     model.create_variables(optimizer=optimizer)
     trackables = dict(model=model, optimizer=optimizer)
-    return checkpoint_util.average_checkpoints(
+    output_dir = checkpoint_util.average_checkpoints(
         checkpoint.model_dir,
         output_dir,
         trackables,
         max_count=max_count)
+    self._config["model_dir"] = output_dir
+    return output_dir
 
   def update_vocab(self, output_dir, src_vocab=None, tgt_vocab=None):
     """Updates model vocabularies.
@@ -277,18 +279,19 @@ class Runner(object):
     model, optimizer = cur_checkpoint.model, cur_checkpoint.optimizer
     model.create_variables(optimizer=optimizer)
 
-    new_config = copy.deepcopy(config)
-    new_config["model_dir"] = output_dir
+    self._config["model_dir"] = output_dir
     if src_vocab is not None:
-      new_config["data"]["source_vocabulary"] = src_vocab
+      self._config["data"]["source_vocabulary"] = src_vocab
     if tgt_vocab is not None:
-      new_config["data"]["target_vocabulary"] = tgt_vocab
+      self._config["data"]["target_vocabulary"] = tgt_vocab
+    new_config = self._finalize_config()
     new_checkpoint = self._init_model(new_config)
     new_model, new_optimizer = new_checkpoint.model, new_checkpoint.optimizer
     new_model.create_variables(optimizer=new_optimizer)
 
     model.transfer_weights(new_model, new_optimizer=new_optimizer, optimizer=optimizer)
-    new_checkpoint.save(optimizer.iterations)
+    new_optimizer.iterations.assign(optimizer.iterations)
+    new_checkpoint.save()
     return output_dir
 
   def infer(self,
@@ -316,17 +319,13 @@ class Runner(object):
         length_bucket_width=infer_config["length_bucket_width"],
         prefetch_buffer_size=infer_config.get("prefetch_buffer_size"))
 
-    @dataset_util.function_on_next(dataset, as_numpy=True)
-    def _predict(next_fn):
-      source = next_fn()
-      return model.infer(source)
-
     if predictions_file:
-      stream = io.open(predictions_file, encoding="utf-8", mode="w")
+      stream = open(predictions_file, encoding="utf-8", mode="w")
     else:
       stream = sys.stdout
 
     ordered_writer = None
+    infer_fn = tf.function(model.infer, input_signature=(dataset.element_spec,))
     write_fn = lambda prediction: (
         model.print_prediction(prediction, params=infer_config, stream=stream))
 
@@ -335,11 +334,13 @@ class Runner(object):
     total_examples = 0
     start_time = time.time()
 
-    for predictions in _predict():  # pylint: disable=no-value-for-parameter
+    for source in dataset:
+      predictions = infer_fn(source)
+      predictions = tf.nest.map_structure(lambda t: t.numpy(), predictions)
       end_time = time.time()
       if log_time:
         total_time += end_time - start_time
-        batch_size = next(six.itervalues(predictions)).shape[0]
+        batch_size = next(iter(predictions.values())).shape[0]
         total_examples += batch_size
         length = predictions.get("length")
         if length is not None:
@@ -397,17 +398,15 @@ class Runner(object):
         score_config["batch_size"],
         prefetch_buffer_size=score_config.get("prefetch_buffer_size"))
 
-    @dataset_util.function_on_next(dataset, as_numpy=True)
-    def _score(next_fn):
-      features, labels = next_fn()
-      return model.score(features, labels)
-
     if output_file:
-      stream = io.open(output_file, encoding="utf-8", mode="w")
+      stream = open(output_file, encoding="utf-8", mode="w")
     else:
       stream = sys.stdout
 
-    for results in _score():  # pylint: disable=no-value-for-parameter
+    score_fn = tf.function(model.score, input_signature=dataset.element_spec)
+    for features, labels in dataset:
+      results = score_fn(features, labels)
+      results = tf.nest.map_structure(lambda t: t.numpy(), results)
       for batch in misc.extract_batches(results):
         model.print_score(batch, params=score_config, stream=stream)
 
@@ -463,7 +462,8 @@ def _auto_tune_batch_size(config,
     model_description = os.path.join(model_dir, "model_description.py")
 
     args = [
-        "python", "-m", "opennmt.bin.main",
+        sys.executable or "python",
+        "-m", "opennmt.bin.main",
         "--config", config_path,
         "--model", model_description,
         "--checkpoint_path", model_dir,

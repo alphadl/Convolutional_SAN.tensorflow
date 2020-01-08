@@ -7,7 +7,7 @@ tests_require = [
 
 setup(
     name="OpenNMT-tf",
-    version="2.1.1",
+    version="2.4.0",
     license="MIT",
     description="Neural machine translation and sequence learning using TensorFlow",
     author="OpenNMT",
@@ -32,11 +32,11 @@ setup(
     },
     keywords="tensorflow opennmt nmt neural machine translation",
     install_requires=[
-        "pyonmttok>=1.16.0,<2;platform_system=='Linux'",
+        "pyonmttok>=1.17.0,<2;platform_system=='Linux'",
         "pyyaml==5.1.*",
         "rouge==0.3.1",
-        "sacrebleu>=1.4.1,<2;python_version>='3.0'",
-        "tensorflow-addons>=0.6.0"
+        "sacrebleu>=1.4.1,<2",
+        "tensorflow-addons>=0.6,<0.7"
     ],
     extras_require={
         "tests": tests_require,

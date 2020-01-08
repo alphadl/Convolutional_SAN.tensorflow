@@ -2,14 +2,12 @@
 
 import collections
 import copy
+import copyreg
 import sys
 import inspect
 import heapq
 import os
 import threading
-import six
-
-from six.moves import copyreg
 
 import numpy as np
 import tensorflow as tf
@@ -17,25 +15,71 @@ import tensorflow as tf
 from tensorflow.python.training.tracking import graph_view
 
 
-def get_variable_name(variable, root, model_key="model"):
-  """Gets the variable name in the object-based representation."""
-  named_variables, _, _ = graph_view.ObjectGraphView(root).serialize_object_graph()
-  for saveable_object in named_variables:
-    if saveable_object.op.name == variable.name:
-      return "%s/%s" % (model_key, saveable_object.name)
-  return None
-
-def print_bytes(str_as_bytes, stream=None):
-  """Prints a string viewed as bytes.
+def get_devices(count=1, fallback_to_cpu=True):
+  """Gets devices.
 
   Args:
-    str_as_bytes: The bytes to print.
+    count: The number of devices to get.
+    fallback_to_cpu: If ``True``, return CPU devices if no GPU is available.
+
+  Returns:
+    A list of device names.
+
+  Raises:
+    ValueError: if :obj:`count` is greater than the number of visible devices.
+  """
+  devices = tf.config.experimental.list_logical_devices(device_type="GPU")
+  if not devices and fallback_to_cpu:
+    devices = tf.config.experimental.list_logical_devices(device_type="CPU")
+  if len(devices) < count:
+    raise ValueError("Requested %d devices but only %d are visible" % (count, len(devices)))
+  return [device.name for device in devices[0:count]]
+
+def get_variables_name_mapping(root, root_key=None):
+  """Returns mapping between variables and their name in the object-based
+  representation.
+
+  Args:
+    root: The root layer.
+    root_key: Key that was used to save :obj:`root`, if any.
+
+  Returns:
+    A dict mapping variables ref to names and a dict mapping variables name to
+    variables.
+  """
+  # TODO: find a way to implement this function using public APIs.
+  named_variables, _, _ = graph_view.ObjectGraphView(root).serialize_object_graph()
+  variables_to_names = {}
+  names_to_variables = {}
+  for saveable_object in named_variables:
+    variable = saveable_object.op
+    if not hasattr(variable, "experimental_ref"):  # Ignore non Tensor-like objects.
+      continue
+    name = saveable_object.name
+    if root_key is not None:
+      name = "%s/%s" % (root_key, name)
+    variables_to_names[variable.experimental_ref()] = name
+    names_to_variables[name] = variable
+  return variables_to_names, names_to_variables
+
+def get_variable_name(variable, root, model_key="model"):
+  """Gets the variable name in the object-based representation."""
+  variables_to_names, _ = get_variables_name_mapping(root, root_key=model_key)
+  # In case of a MirroredVariable, look up the primary variable
+  variable = getattr(variable, "primary", variable)
+  return variables_to_names.get(variable.experimental_ref())
+
+def print_as_bytes(text, stream=None):
+  """Prints a string as bytes to non rely on :obj:`stream` default encoding.
+
+  Args:
+    text: The text to print.
     stream: The stream to print to (``sys.stdout`` if not set).
   """
   if stream is None:
     stream = sys.stdout
   write_buffer = stream.buffer if hasattr(stream, "buffer") else stream
-  write_buffer.write(str_as_bytes)
+  write_buffer.write(tf.compat.as_bytes(text))
   write_buffer.write(b"\n")
   stream.flush()
 
@@ -88,12 +132,6 @@ def classes_in_module(module, public_only=False):
   return (symbol for symbol in dir(module)
           if (inspect.isclass(getattr(module, symbol))
               and (not public_only or not symbol.startswith("_"))))
-
-def function_args(fun):
-  """Returns the name of :obj:`fun` arguments."""
-  if hasattr(inspect, "getfullargspec"):
-    return inspect.getfullargspec(fun).args
-  return inspect.getargspec(fun).args  # pylint: disable=deprecated-method
 
 def count_lines(filename):
   """Returns the number of lines of the file :obj:`filename`."""
@@ -152,16 +190,16 @@ def clone_layer(layer):
 
 def gather_all_layers(layer):
   """Returns all nested layer starting from :obj:`layer`."""
-  layers = []
+  layers = set()
   if not isinstance(layer, tf.Module):
     return layers
-  layers.append(layer)
-  for value in six.itervalues(layer.__dict__):
+  layers.add(layer)
+  for value in layer.__dict__.values():
     if isinstance(value, tf.Module):
-      layers.extend(gather_all_layers(value))
+      layers.update(gather_all_layers(value))
     elif isinstance(value, list):
       for sub_layer in value:
-        layers.extend(gather_all_layers(sub_layer))
+        layers.update(gather_all_layers(sub_layer))
   return layers
 
 def set_dropout(root_layer, dropout):
@@ -171,7 +209,7 @@ def set_dropout(root_layer, dropout):
     dropout: The dropout value to set.
   """
   for layer in gather_all_layers(root_layer):
-    for attr, value in six.iteritems(layer.__dict__):
+    for attr, value in layer.__dict__.items():
       if isinstance(value, tf.keras.layers.Dropout):
         value.rate = dropout
       elif "dropout" in attr:
@@ -185,11 +223,11 @@ def extract_batches(tensors):
       yield tensor
   else:
     batch_size = None
-    for value in six.itervalues(tensors):
+    for value in tensors.values():
       batch_size = batch_size or value.shape[0]
     for b in range(batch_size):
       yield {
-          key: value[b] for key, value in six.iteritems(tensors)
+          key: value[b] for key, value in tensors.items()
       }
 
 def extract_prefixed_keys(dictionary, prefix):
@@ -197,7 +235,7 @@ def extract_prefixed_keys(dictionary, prefix):
   with :obj:`prefix`.
   """
   sub_dict = {}
-  for key, value in six.iteritems(dictionary):
+  for key, value in dictionary.items():
     if key.startswith(prefix):
       original_key = key[len(prefix):]
       sub_dict[original_key] = value
@@ -208,7 +246,7 @@ def extract_suffixed_keys(dictionary, suffix):
   with :obj:`suffix`.
   """
   sub_dict = {}
-  for key, value in six.iteritems(dictionary):
+  for key, value in dictionary.items():
     if key.endswith(suffix):
       original_key = key[:-len(suffix)]
       sub_dict[original_key] = value
@@ -224,7 +262,7 @@ def merge_dict(dict1, dict2):
   Returns:
     The merged dictionary :obj:`dict1`.
   """
-  for key, value in six.iteritems(dict2):
+  for key, value in dict2.items():
     if isinstance(value, dict):
       dict1[key] = merge_dict(dict1.get(key, {}), value)
     else:
@@ -253,9 +291,7 @@ def read_summaries(event_dir, event_file_pattern="events.out.tfevents.*"):
         tensor = tf.io.parse_tensor(
             tensor_proto.SerializeToString(), tf.as_dtype(tensor_proto.dtype))
         summaries[event.step][value.tag] = tf.get_static_value(tensor)
-  return [
-      (step, values)
-      for step, values in sorted(six.iteritems(summaries), key=lambda x: x[0])]
+  return list(sorted(summaries.items(), key=lambda x: x[0]))
 
 class OrderRestorer(object):
   """Helper class to restore out-of-order elements in order."""

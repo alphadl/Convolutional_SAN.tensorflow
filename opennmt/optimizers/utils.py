@@ -8,6 +8,27 @@ import tensorflow_addons as tfa
 from tensorflow_addons.optimizers.weight_decay_optimizers import DecoupledWeightDecayExtension
 
 
+def get_optimizer_class(name):
+  """Returns the optimizer class.
+
+  Args:
+    name: The optimizer name.
+
+  Returns:
+    A class extending ``tf.keras.optimizers.Optimizer``.
+
+  Raises:
+    ValueError: if :obj:`name` can not be resolved to an optimizer class.
+  """
+  optimizer_class = None
+  if optimizer_class is None:
+    optimizer_class = getattr(tf.keras.optimizers, name, None)
+  if optimizer_class is None:
+    optimizer_class = getattr(tfa.optimizers, name, None)
+  if optimizer_class is None:
+    raise ValueError("Unknown optimizer class: %s" % name)
+  return optimizer_class
+
 def make_optimizer(name, learning_rate, **kwargs):
   """Creates the optimizer.
 
@@ -24,13 +45,7 @@ def make_optimizer(name, learning_rate, **kwargs):
   Raises:
     ValueError: if :obj:`name` can not be resolved to an optimizer class.
   """
-  optimizer_class = None
-  if optimizer_class is None:
-    optimizer_class = getattr(tf.keras.optimizers, name, None)
-  if optimizer_class is None:
-    optimizer_class = getattr(tfa.optimizers, name, None)
-  if optimizer_class is None:
-    raise ValueError("Unknown optimizer class: {}".format(name))
+  optimizer_class = get_optimizer_class(name)
   if "weight_decay" in kwargs:
     if DecoupledWeightDecayExtension not in inspect.getmro(optimizer_class):
       optimizer_class = tfa.optimizers.extend_with_decoupled_weight_decay(optimizer_class)
@@ -90,8 +105,9 @@ class GradientAccumulator(object):
       replica_context = tf.distribute.get_replica_context()
       if replica_context is None:
         return self._gradients
-      return (
-          gradient.device_map.select_for_current_replica(gradient.values, replica_context)
-          for gradient in self._gradients)
+      replica_id = replica_context.replica_id_in_sync_group
+      if not isinstance(replica_id, int):
+        replica_id = tf.get_static_value(replica_id)
+      return (gradient.values[replica_id] for gradient in self._gradients)
     else:
       return self._gradients

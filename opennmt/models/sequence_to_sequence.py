@@ -2,14 +2,11 @@
 
 """Standard sequence-to-sequence model."""
 
-import six
-
 import tensorflow as tf
 import tensorflow_addons as tfa
 
 from opennmt import constants
 from opennmt import inputters
-from opennmt import layers
 
 from opennmt.data import noise
 from opennmt.data import text
@@ -18,7 +15,7 @@ from opennmt.layers import reducer
 from opennmt.models import model
 from opennmt.utils import decoding
 from opennmt.utils import losses
-from opennmt.utils.misc import print_bytes, format_translation_output, merge_dict, shape_list
+from opennmt.utils import misc
 from opennmt.decoders import decoder as decoder_util
 
 
@@ -101,7 +98,7 @@ class SequenceToSequence(model.SequenceGenerator):
 
   def auto_config(self, num_replicas=1):
     config = super(SequenceToSequence, self).auto_config(num_replicas=num_replicas)
-    return merge_dict(config, {
+    return misc.merge_dict(config, {
         "params": {
             "beam_width": 4
         },
@@ -115,8 +112,20 @@ class SequenceToSequence(model.SequenceGenerator):
         }
     })
 
+  def map_v1_weights(self, weights):
+    if not isinstance(self.features_inputter, inputters.WordEmbedder):
+      raise ValueError("Can not restore V1 model with multi features or multi source inputs")
+    weights = weights["seq2seq"]
+    m = []
+    m += self.features_inputter.map_v1_weights(weights["encoder"])
+    m += self.labels_inputter.map_v1_weights(weights["decoder"])
+    m += self.encoder.map_v1_weights(weights["encoder"])
+    m += self.decoder.map_v1_weights(weights["decoder"])
+    return m
+
   def initialize(self, data_config, params=None):
     super(SequenceToSequence, self).initialize(data_config, params=params)
+    self.decoder.initialize(vocab_size=self.labels_inputter.vocabulary_size)
     if self.params.get("contrastive_learning"):
       # Use the simplest and most effective CL_one from the paper.
       # https://www.aclweb.org/anthology/P19-1623
@@ -135,15 +144,8 @@ class SequenceToSequence(model.SequenceGenerator):
 
   def build(self, input_shape):
     super(SequenceToSequence, self).build(input_shape)
-    output_layer = None
     if EmbeddingsSharingLevel.share_target_embeddings(self.share_embeddings):
-      output_layer = layers.Dense(
-          self.labels_inputter.vocabulary_size,
-          weight=self.labels_inputter.embedding,
-          transpose=True)
-    self.decoder.initialize(
-        vocab_size=self.labels_inputter.vocabulary_size,
-        output_layer=output_layer)
+      self.decoder.reuse_embeddings(self.labels_inputter.embedding)
 
   def call(self, features, labels=None, training=None, step=None):
     # Encode the source.
@@ -264,7 +266,7 @@ class SequenceToSequence(model.SequenceGenerator):
       # Merge batch and beam dimensions.
       original_shape = tf.shape(target_tokens)
       target_tokens = tf.reshape(target_tokens, [-1, original_shape[-1]])
-      align_shape = shape_list(alignment)
+      align_shape = misc.shape_list(alignment)
       attention = tf.reshape(
           alignment, [align_shape[0] * align_shape[1], align_shape[2], align_shape[3]])
       # We don't have attention for </s> but ensure that the attention time dimension matches
@@ -301,7 +303,7 @@ class SequenceToSequence(model.SequenceGenerator):
     if num_hypotheses > 0:
       if num_hypotheses > beam_size:
         raise ValueError("n_best cannot be greater than beam_width")
-      for key, value in six.iteritems(predictions):
+      for key, value in predictions.items():
         predictions[key] = value[:, :num_hypotheses]
     return predictions
 
@@ -365,12 +367,12 @@ class SequenceToSequence(model.SequenceGenerator):
         score = prediction["log_probs"][i]
       if alignment_type:
         attention = prediction["alignment"][i][:target_length]
-      sentence = format_translation_output(
+      sentence = misc.format_translation_output(
           sentence,
           score=score,
           attention=attention,
           alignment_type=alignment_type)
-      print_bytes(tf.compat.as_bytes(sentence), stream=stream)
+      misc.print_as_bytes(sentence, stream=stream)
 
   def transfer_weights(self, new_model, new_optimizer=None, optimizer=None, ignore_weights=None):
     updated_variables = []
@@ -495,7 +497,7 @@ def _add_noise(tokens, lengths, params, subword_token, is_spacer=None):
     raise ValueError("Expected a list of noise modules")
   noises = []
   for module in params:
-    noise_type, args = six.next(six.iteritems(module))
+    noise_type, args = next(iter(module.items()))
     if not isinstance(args, list):
       args = [args]
     noise_type = noise_type.lower()

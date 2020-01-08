@@ -2,7 +2,6 @@
 
 import copy
 import os
-import six
 
 import tensorflow as tf
 
@@ -50,8 +49,17 @@ class Checkpoint(object):
     """The model directory."""
     return self._model_dir
 
-  def save(self, step):
-    """Saves a checkpoint for :obj:`step`."""
+  def save(self, step=None):
+    """Saves a checkpoint.
+
+    Args:
+      step: The step to save for. If ``None``, get the value from ``optimizer.iterations``.
+
+    Returns:
+      The path to the saved checkpoint.
+    """
+    if step is None:
+      step = self._optimizer.iterations
     path = self._checkpoint_manager.save(checkpoint_number=step)
     tf.get_logger().info("Saved checkpoint %s", path)
     return path
@@ -79,8 +87,7 @@ class Checkpoint(object):
     if checkpoint_path is None:
       tf.get_logger().warning("No checkpoint to restore in %s", self._model_dir)
       return None
-    is_v1 = os.path.basename(checkpoint_path).startswith("model")
-    if is_v1:
+    if is_v1_checkpoint(checkpoint_path):
       tf.get_logger().info("Upgrading V1 checkpoint...")
       # Work with copies of model and optimizer as the downstream task might
       # need to create the variable differently (e.g. under a distribution
@@ -102,6 +109,14 @@ class Checkpoint(object):
     return checkpoint_path
 
 
+def is_v1_checkpoint(checkpoint_path):
+  """Returns ``True`` if the checkpoint at :obj:`checkpoint_path` has been
+  trained with OpenNMT-tf v1.
+  """
+  if tf.io.gfile.isdir(checkpoint_path):
+    checkpoint_path = tf.train.latest_checkpoint(checkpoint_path)
+  return os.path.basename(checkpoint_path).startswith("model")
+
 def get_checkpoint_variables(checkpoint_path):
   """Returns variables included in a checkpoint.
 
@@ -114,7 +129,7 @@ def get_checkpoint_variables(checkpoint_path):
   reader = tf.train.load_checkpoint(checkpoint_path)
   return {
       name:reader.get_tensor(name)
-      for name in six.iterkeys(reader.get_variable_to_shape_map())}
+      for name in reader.get_variable_to_shape_map().keys()}
 
 def average_checkpoints(model_dir,
                         output_dir,
@@ -159,6 +174,9 @@ def average_checkpoints(model_dir,
   num_checkpoints = len(checkpoints_path)
   last_step = int(checkpoints_path[-1].split("-")[-1])
 
+  # Get a map from variable names in the checkpoint to variables in the model.
+  _, names_to_variables = misc.get_variables_name_mapping(model, root_key=model_key)
+
   tf.get_logger().info("Averaging %d checkpoints...", num_checkpoints)
   for i, checkpoint_path in enumerate(reversed(checkpoints_path)):
     tf.get_logger().info("Reading checkpoint %s...", checkpoint_path)
@@ -168,11 +186,10 @@ def average_checkpoints(model_dir,
         variable.assign(variable / num_checkpoints)
     else:
       reader = tf.train.load_checkpoint(checkpoint_path)
-      for path in six.iterkeys(reader.get_variable_to_shape_map()):
+      for path in reader.get_variable_to_shape_map().keys():
         if not path.startswith(model_key) or ".OPTIMIZER_SLOT" in path:
           continue
-        variable_path = path.replace("/.ATTRIBUTES/VARIABLE_VALUE", "")
-        variable = misc.index_structure(trackables, variable_path)
+        variable = names_to_variables[path]
         value = reader.get_tensor(path)
         variable.assign_add(value / num_checkpoints)
 
@@ -213,7 +230,7 @@ def _restore_v1_checkpoint(checkpoint_path, model, optimizer=None):
       v1_slots = None
     v2_variable.assign(v1_variable)
     if v1_slots is not None:
-      for slot_name, value in six.iteritems(v1_slots):
+      for slot_name, value in v1_slots.items():
         v2_slot = optimizer.get_slot(v2_variable, slot_name)
         v2_slot.assign(value)
   return step
@@ -221,7 +238,7 @@ def _restore_v1_checkpoint(checkpoint_path, model, optimizer=None):
 def _variables_to_structure(variables):
   """Represents variables a nested dictionary with scope names as keys."""
   structure = {}
-  for name, value in six.iteritems(variables):
+  for name, value in variables.items():
     fields = name.split("/")
     cur = structure
     for i, key in enumerate(fields):
@@ -229,8 +246,7 @@ def _variables_to_structure(variables):
         if i + 1 == len(fields):
           cur[key] = value
           break
-        else:
-          cur[key] = {}
+        cur[key] = {}
       cur = cur[key]
   return structure
 
@@ -240,7 +256,7 @@ def _merge_optimizer_slots(variables, slots):
   """
   if isinstance(variables, dict):
     merged = {}
-    for key, value in six.iteritems(variables):
+    for key, value in variables.items():
       if key not in slots:
         merged[key] = copy.deepcopy(value)
       else:
@@ -248,7 +264,7 @@ def _merge_optimizer_slots(variables, slots):
     return merged
   else:
     new_slots = {}
-    for name, value in six.iteritems(slots):
+    for name, value in slots.items():
       name = _V1_SLOTS_MAPPING.get(name)
       if name is None:
         # Just ignore the optimizer slots if their name is not listed.

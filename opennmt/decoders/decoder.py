@@ -1,7 +1,6 @@
 """Base class and functions for dynamic decoders."""
 
 import abc
-import six
 
 import tensorflow as tf
 
@@ -61,7 +60,6 @@ def get_sampling_probability(step,
   return 1.0 - read_probability
 
 
-@six.add_metaclass(abc.ABCMeta)
 class Decoder(tf.keras.layers.Layer):
   """Base class for decoders."""
 
@@ -102,6 +100,11 @@ class Decoder(tf.keras.layers.Layer):
     history."""
     return False
 
+  @property
+  def initialized(self):
+    """Returns ``True`` if this decoder is initialized."""
+    return self.output_layer is not None
+
   def initialize(self, vocab_size=None, output_layer=None):
     """Initializes the decoder configuration.
 
@@ -118,6 +121,18 @@ class Decoder(tf.keras.layers.Layer):
       if vocab_size is None:
         raise ValueError("One of vocab_size and output_layer must be set")
       self.output_layer = common.Dense(vocab_size)
+
+  def reuse_embeddings(self, embeddings):
+    """Reuses embeddings in the decoder output layer.
+
+    Args:
+      embeddings: The embeddings matrix to reuse.
+
+    Raises:
+      RuntimeError: if the decoder was not initialized.
+    """
+    self._assert_is_initialized()
+    self.output_layer.set_kernel(embeddings, transpose=True)
 
   def initial_state(self,
                     memory=None,
@@ -386,6 +401,9 @@ class Decoder(tf.keras.layers.Layer):
         attention_history=self.support_alignment_history,
         attention_size=tf.shape(self.memory)[1] if self.support_alignment_history else None)
 
+  def map_v1_weights(self, weights):
+    return self.output_layer.map_v1_weights(weights["dense"])
+
   @abc.abstractmethod
   def _get_initial_state(self, batch_size, dtype, initial_state=None):
     """Returns the decoder initial state.
@@ -402,7 +420,7 @@ class Decoder(tf.keras.layers.Layer):
 
   def _assert_is_initialized(self):
     """Raises an expection if the decoder was not initialized."""
-    if self.output_layer is None:
+    if not self.initialized:
       raise RuntimeError("The decoder was not initialized")
 
   def _assert_memory_is_compatible(self, memory, memory_sequence_length):

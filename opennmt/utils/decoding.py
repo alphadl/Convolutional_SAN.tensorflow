@@ -2,7 +2,6 @@
 
 import abc
 import collections
-import six
 
 import tensorflow as tf
 import tensorflow_addons as tfa
@@ -11,8 +10,7 @@ from opennmt import constants
 from opennmt.utils import misc
 
 
-@six.add_metaclass(abc.ABCMeta)
-class Sampler(object):
+class Sampler(abc.ABC):
   """Base class for samplers."""
 
   @abc.abstractmethod
@@ -82,8 +80,7 @@ class BestSampler(Sampler):
     return sample_ids, sample_scores
 
 
-@six.add_metaclass(abc.ABCMeta)
-class DecodingStrategy(object):
+class DecodingStrategy(abc.ABC):
   """Base class for decoding strategies."""
 
   @property
@@ -482,7 +479,6 @@ def dynamic_decode(symbols_to_logits_fn,
           initial_log_probs.shape,
           tf.nest.map_structure(_get_shape_invariants, extra_vars)),
       parallel_iterations=1,
-      back_prop=False,
       maximum_iterations=maximum_iterations)
 
   ids, attention, lengths = decoding_strategy._finalize(  # pylint: disable=protected-access

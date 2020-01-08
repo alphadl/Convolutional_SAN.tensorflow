@@ -15,6 +15,57 @@ OpenNMT-tf follows [semantic versioning 2.0.0](https://semver.org/). The API cov
 
 ### Fixes and improvements
 
+## [2.4.0](https://github.com/OpenNMT/OpenNMT-tf/releases/tag/v2.4.0) (2019-12-10)
+
+### New features
+
+* Transformer models with relative position representation: `TransformerRelative` and `TransformerBigRelative`
+
+### Fixes and improvements
+
+* Fix invalid iteration count in checkpoint after a vocabulary update
+* Fix possible NaN loss when retraining after a vocabulary update
+* Fix checkpoint averaging for models with custom variable names
+* Update `opennmt.convert_to_v2_config` to not fail on a V2 configuration
+* Change default value of `average_loss_in_time` based on `batch_type`
+* Reuse the same Python interpreter when running batch size auto-tuning
+
+## [2.3.0](https://github.com/OpenNMT/OpenNMT-tf/releases/tag/v2.3.0) (2019-11-25)
+
+### New features
+
+* Predefined models `NMTSmallV1`, `NMTMediumV1`, and `NMTBigV1` for compatibility with OpenNMT-tf v1
+* Function `opennmt.convert_to_v2_config` to automatically upgrade a V1 configuration
+* Function `opennmt.utils.is_v1_checkpoint` to detect OpenNMT-tf v1 checkpoints
+
+### Fixes and improvements
+
+* Fix error when using `auto_config` with model `LstmCnnCrfTagger`
+* Fix incomplete `Model.create_variables` after manually calling `Model.build`
+* Increase `LayerNorm` default epsilon value to be closer to TensorFlow and PyTorch defaults
+
+## [2.2.1](https://github.com/OpenNMT/OpenNMT-tf/releases/tag/v2.2.1) (2019-11-07)
+
+### Fixes and improvements
+
+* Ensure that each training GPU receives a batch with the size configured by the user
+* Fix error on the last partial batch when using multiple GPUs with `single_pass` enabled
+
+## [2.2.0](https://github.com/OpenNMT/OpenNMT-tf/releases/tag/v2.2.0) (2019-11-06)
+
+### New features
+
+* Return detokenized predictions when using a in-graph tokenizer
+* Injection of the special tokens `<s>` and `</s>` for language models can be configured with the data parameter `sequence_controls`
+
+### Fixes and improvements
+
+* Fix the batch size in multi GPU training that was not scaled by the number of devices
+* When updating vocabularies, mirror the existing embeddings distribution for newly created embeddings
+* Fix error when running `onmt-tokenize-text` and `onmt-detokenize-text` scripts
+* Transformer decoder now always returns the attention on the first source
+* Calling `model.initialize()` also initialize the decoder (if any)
+
 ## [2.1.1](https://github.com/OpenNMT/OpenNMT-tf/releases/tag/v2.1.1) (2019-10-18)
 
 ### Fixes and improvements
