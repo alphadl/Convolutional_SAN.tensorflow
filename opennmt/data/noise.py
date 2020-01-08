@@ -207,7 +207,7 @@ class RareWordOmission(Noise):
 
   def __init__(self, counts_file):
     self.counts = tf.lookup.StaticHashTable(tf.lookup.TextFileInitializer(
-      counts_file, tf.string, 0, tf.int64, 1, delimiter="\t"), 0)
+      counts_file, tf.string, 0, tf.int64, 1, delimiter="\t"), 1)
     # Below reads counts from UNTOKENIZED corpus (not by default available...)
     # with open(target_corpus) as f:
     #     counter = Counter(chain.from_iterable(map(str.split, f)))
@@ -221,14 +221,14 @@ class RareWordOmission(Noise):
     num_words = tf.shape(words)[0]
 
     # Get a list of actual words that can be mapped against the counts table.
-    words = tf.strings.reduce_join(words, axis=1)
-    lengths = tf.strings.length(reduced, unit="UTF8_CHAR")
+    reduced_words = tf.strings.reduce_join(words, axis=1)
+    lengths = tf.strings.length(reduced_words, unit="UTF8_CHAR")
     pos = tf.ones(num_words, dtype=tf.int32)
-    words = tf.strings.substr(words, pos=pos, len=lengths, unit="UTF8_CHAR")
+    reduced_words = tf.strings.substr(reduced_words, pos=pos, len=lengths, unit="UTF8_CHAR")
 
-    counts = self.counts.lookup(words)
+    counts = self.counts.lookup(reduced_words)
     drop_probas = tf.nn.softmax(tf.math.reciprocal(tf.cast(counts, dtype=tf.float32)))
-    remove_index = tf.random.categorical(tf.math.log([drop_probas]), 1)
+    remove_index = tf.squeeze(tf.random.categorical(tf.math.log([drop_probas]), 1))
     # This will instead remove the HARD most rare word in the sentence.
     # remove_index = tf.math.argmin(counts)
 
