@@ -13,7 +13,17 @@ OpenNMT-tf follows [semantic versioning 2.0.0](https://semver.org/). The API cov
 
 ### New features
 
+* Update to TensorFlow 2.1<br/>OpenNMT-tf now depends on the `tensorflow` pip package instead of `tensorflow-gpu`. The `tensorflow` package now includes GPU support by default. If you are upgrading an existing environment, we recommend uninstalling the `tensorflow-gpu` package before doing so.
+* Update to TensorFlow Addons 0.7 with Windows support
+* Data parameter `export_vocabulary_assets` to embed word vocabularies in the graph itself
+
 ### Fixes and improvements
+
+* Fix error when reading loss returned by a sequence classifier model
+* Fix error on sequences of length 1 in the sequence tagger with CRF
+* Rollback to export vocabularies as file assets
+* Remove some synchronization points when training multiple replicas
+* Internal cleanup to fully remove Python 2 support
 
 ## [2.4.0](https://github.com/OpenNMT/OpenNMT-tf/releases/tag/v2.4.0) (2019-12-10)
 

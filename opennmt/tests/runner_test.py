@@ -91,14 +91,8 @@ class RunnerTest(tf.test.TestCase):
     with open(en_file) as f:
       self.assertEqual(next(f).strip(), "a t z m o n")
 
-  @test_util.new_context
+  @test_util.run_with_two_cpu_devices
   def testTrainDistribute(self):
-    physical_devices = tf.config.experimental.list_physical_devices("CPU")
-    tf.config.experimental.set_virtual_device_configuration(
-        physical_devices[0],
-        [tf.config.experimental.VirtualDeviceConfiguration(),
-         tf.config.experimental.VirtualDeviceConfiguration()])
-
     ar_file, en_file  = self._makeTransliterationData()
     config = {
         "data": {
@@ -233,9 +227,11 @@ class RunnerTest(tf.test.TestCase):
       lines = f.readlines()
     self.assertEqual(len(lines), 5)
 
-  def testExport(self):
+  @parameterized.expand([[True], [False]])
+  def testExport(self, export_vocabulary_assets):
     config = {
         "data": {
+            "export_vocabulary_assets": export_vocabulary_assets,
             "source_tokenization": {
                 "mode": "char"
             }
@@ -245,10 +241,23 @@ class RunnerTest(tf.test.TestCase):
     runner = self._getTransliterationRunner(config)
     runner.export(export_dir)
     self.assertTrue(tf.saved_model.contains_saved_model(export_dir))
+
+    # Check assets directories.
+    assets = os.listdir(os.path.join(export_dir, "assets"))
+    if export_vocabulary_assets:
+      self.assertLen(assets, 2)
+    else:
+      self.assertLen(assets, 0)
     extra_assets_dir = os.path.join(export_dir, "assets.extra")
     self.assertTrue(os.path.isdir(extra_assets_dir))
     self.assertLen(os.listdir(extra_assets_dir), 1)
-    imported = tf.saved_model.load(export_dir)
+
+    # Export directory could be relocated and does not reference the original vocabulary files.
+    shutil.rmtree(runner.model_dir)
+    export_dir_2 = os.path.join(self.get_temp_dir(), "export_2")
+    os.rename(export_dir, export_dir_2)
+    self.assertTrue(tf.saved_model.contains_saved_model(export_dir_2))
+    imported = tf.saved_model.load(export_dir_2)
     translate_fn = imported.signatures["serving_default"]
     outputs = translate_fn(
         tokens=tf.constant([["آ" ,"ت" ,"ز" ,"م" ,"و" ,"ن"]]),
