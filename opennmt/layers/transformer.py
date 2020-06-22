@@ -159,6 +159,8 @@ class MultiHeadAttention(tf.keras.layers.Layer):
                dropout=0.1,
                return_attention=False,
                maximum_relative_position=None,
+               attention_span=None,
+               num_attended_heads=1,
                **kwargs):
     """Initializes this layer.
 
@@ -170,6 +172,12 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         first head.
       maximum_relative_position: Maximum relative position representation
         (from https://arxiv.org/abs/1803.02155).
+      attention_span: Maximum relative position to attend to
+        (from https://arxiv.org/abs/1904.03107).
+      num_attended_heads: How many heads should be attended. Defaults to 1
+        as each head only attends to itself in vanilla Transformer. Increase to
+        an odd number < `num_heads` to also model head interaction.
+        (from ttps://arxiv.org/abs/1904.03107).
       kwargs: Additional layer arguments.
     """
     super(MultiHeadAttention, self).__init__(**kwargs)
@@ -185,6 +193,10 @@ class MultiHeadAttention(tf.keras.layers.Layer):
     self.dropout = dropout
     self.return_attention = return_attention
     self.maximum_relative_position = maximum_relative_position
+    self.attention_span = attention_span
+    if num_attended_heads % 2 == 0:
+      raise ValueError("Number heads attended must be odd to guarantee symmetry.")
+    self.num_attended_heads = num_attended_heads
 
   def map_v1_weights(self, weights):
     # V1 used conv1d layers that have a leading dimensions.
@@ -280,8 +292,35 @@ class MultiHeadAttention(tf.keras.layers.Layer):
 
     cache = (keys, values)
 
+    # Express 2D Convolution as an expanded matrix multiplication.
+    # Does nothing if `num_heads_attended == 1`
+    max_shift = int((self.num_attended_heads - 1) / 2)
+
+    def conv_itself(x):
+      rolls = [tf.roll(x, shift=shift, axis=1) for shift in range(max_shift, -(max_shift + 1), -1)]
+      return tf.concat(rolls, axis=2)
+
+    keys = conv_itself(keys)
+    values = conv_itself(values)
+
     # Dot product attention.
     dot = tf.matmul(queries, keys, transpose_b=True)
+
+    if self.attention_span is not None:
+      if memory is not None:
+        raise ValueError("Attention Span only supports self-attention")
+      batch_size = tf.shape(queries)[0]
+      maximum_length = tf.shape(queries)[2]
+      attention_span = tf.math.minimum(self.attention_span, maximum_length)
+      head_span_mask = tf.linalg.band_part(
+          tf.ones([batch_size, self.num_heads, maximum_length, maximum_length]),
+          attention_span,
+          attention_span)
+      span_mask = tf.concat([head_span_mask] * self.num_attended_heads, axis=3)
+      span_mask = tf.cast(span_mask, tf.float32)
+      dot = tf.cast(
+          tf.cast(dot, tf.float32) * span_mask + ((1.0 - span_mask) * tf.float32.min), dot.dtype)
+
     if relative_repr_keys is not None:
       dot += matmul_with_relative_representations(queries, relative_repr_keys, transpose_b=True)
     if mask is not None:
@@ -289,6 +328,7 @@ class MultiHeadAttention(tf.keras.layers.Layer):
       if mask.shape.rank == 2:
         mask = tf.expand_dims(mask, 1)  # Broadcast on time dimension.
       mask = tf.expand_dims(mask, 1)  # Broadcast on head dimension.
+      mask = tf.concat([mask] * self.num_attended_heads, axis=3) # Replicate on time dimension.
       dot = tf.cast(tf.cast(dot, tf.float32) * mask + ((1.0 - mask) * tf.float32.min), dot.dtype)
     attn = tf.cast(tf.nn.softmax(tf.cast(dot, tf.float32)), dot.dtype)
     drop_attn = common.dropout(attn, self.dropout, training=training)
@@ -348,6 +388,8 @@ class SelfAttentionEncoderLayer(tf.keras.layers.Layer):
                ffn_dropout=0.1,
                ffn_activation=tf.nn.relu,
                maximum_relative_position=None,
+               attention_span=None,
+               num_attended_heads=1,
                **kwargs):
     """Initializes the layer.
 
@@ -364,6 +406,12 @@ class SelfAttentionEncoderLayer(tf.keras.layers.Layer):
         transformations of the feed forward layer.
       maximum_relative_position: Maximum relative position representation
         (from https://arxiv.org/abs/1803.02155).
+      attention_span: Maximum relative position to attend to
+        (from https://arxiv.org/abs/1904.03107).
+      num_attended_heads: How many heads should be attended. Defaults to 1
+        as each head only attends to itself in vanilla Transformer. Increase to
+        an odd number < `num_heads` to also model head interaction.
+        (from ttps://arxiv.org/abs/1904.03107).
       kwargs: Additional layer arguments.
     """
     super(SelfAttentionEncoderLayer, self).__init__(**kwargs)
@@ -371,7 +419,9 @@ class SelfAttentionEncoderLayer(tf.keras.layers.Layer):
         num_heads,
         num_units,
         dropout=attention_dropout,
-        maximum_relative_position=maximum_relative_position)
+        maximum_relative_position=maximum_relative_position,
+        attention_span=attention_span,
+        num_attended_heads=num_attended_heads)
     self.self_attention = TransformerLayerWrapper(
         self.self_attention, dropout)
     self.ffn = FeedForwardNetwork(
